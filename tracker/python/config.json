@@ -1,0 +1,43 @@
+{
+  "camera": "/dev/v4l/by-id/usb-Microsoft_Microsoft\u00ae_LifeCam_Studio_TM_-video-index0",
+  "width": 640,
+  "height": 480,
+  "roll_deg": 0.0,
+  "threads": 4,
+  "detector": "yolov8n_xnn8_320.pte",
+  "detector_size": 320,
+  "placement": "xnn8",
+  "placements": [
+    "xnn8",
+    "xnn32",
+    "vk16",
+    "x=vk16,fusion=xnn32,head=xnn32"
+  ],
+  "det_conf": 0.25,
+  "hits_to_track": 3,
+  "hit_radius": 0.15,
+  "lost_score": 0.3,
+  "lost_time": 0.5,
+  "verify_period": 1.0,
+  "verify_iou": 0.3,
+  "deadband": 0.08,
+  "invert": false,
+  "jog_pwm": 25,
+  "keepalive_hz": 20,
+  "stream_fps": 15,
+  "follow": false,
+  "pulse_pwm": 25,
+  "pulse_k_ms": 600,
+  "pulse_min_ms": 60,
+  "pulse_max_ms": 400,
+  "settle_ms": 300,
+  "settle_frames": 2,
+  "verify_strikes": 1,
+  "verify_detector": "yolov8n_vk16_320.pte",
+  "camera_ctrls": {
+    "power_line_frequency": 2,
+    "auto_exposure": 1,
+    "exposure_time_absolute": 156,
+    "brightness": 200
+  }
+}

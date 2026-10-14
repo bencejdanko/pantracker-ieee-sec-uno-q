@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNO Q tracker</title>
+<style>
+  :root { --bg:#111418; --panel:#1b2027; --fg:#e6e9ee; --mut:#8a94a3; --acc:#4fa3ff; --ok:#38c172; --warn:#f6ad55; --bad:#e3342f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  header { padding:10px 16px; display:flex; gap:16px; align-items:center; border-bottom:1px solid #2a313b; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  #state { font-weight:700; padding:2px 10px; border-radius:10px; background:#2a313b; }
+  .IDLE { color:var(--mut); } .SEARCH { color:var(--warn); } .TRACK { color:var(--ok); } .LOST { color:var(--bad); }
+  main { display:grid; grid-template-columns: minmax(320px, 680px) 1fr; gap:16px; padding:16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background:var(--panel); border-radius:8px; padding:12px; }
+  #feed { width:100%; border-radius:6px; background:#000; display:block; }
+  #alert { margin:10px 0 0; padding:8px 10px; border-radius:6px; background:#2a313b; font-weight:600; }
+  #alert.bad { background:#4a1f1f; color:#ffb4b4; } #alert.warn { background:#4a3a1f; color:#ffd89b; } #alert.ok { background:#1f4a2e; color:#b4ffcc; }
+  .row { display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+  input[type=text] { flex:1; min-width:160px; padding:8px; border-radius:6px; border:1px solid #39414d; background:#0f1216; color:var(--fg); }
+  button { padding:8px 14px; border-radius:6px; border:0; background:#2d3540; color:var(--fg); cursor:pointer; font-weight:600; }
+  button:hover { background:#38424f; } button.primary { background:var(--acc); color:#06121f; }
+  #estop { background:var(--bad); color:#fff; font-size:16px; padding:10px 20px; }
+  #estop.latched { outline:3px solid #fff; }
+  #camera.off { background:var(--warn); color:#06121f; }
+  .rollstep { padding:8px 10px; min-width:48px; font-variant-numeric: tabular-nums; }
+  #rollnum { width:80px; padding:7px; border-radius:6px; border:1px solid #39414d; background:#0f1216; color:var(--fg); text-align:right; }
+  .jog { font-size:20px; width:64px; user-select:none; touch-action:none; }
+  label { color:var(--mut); min-width:90px; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric: tabular-nums; }
+  td { padding:3px 4px; border-bottom:1px solid #262c35; } td:first-child { color:var(--mut); }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); margin:14px 0 6px; }
+  .tune input { width:80px; padding:4px; background:#0f1216; color:var(--fg); border:1px solid #39414d; border-radius:4px; }
+  select { padding:6px; background:#0f1216; color:var(--fg); border:1px solid #39414d; border-radius:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>UNO Q · detect-and-track pan camera</h1>
+  <span id="state" class="IDLE">IDLE</span>
+  <span id="fps" style="color:var(--mut)"></span>
+  <span style="flex:1"></span>
+  <button id="camera">Camera: on</button>
+  <button id="estop">E-STOP</button>
+</header>
+<main>
+  <section class="panel">
+    <img id="feed" src="/stream.mjpg" alt="live feed">
+    <div id="alert">No instructions</div>
+    <div class="row">
+      <input id="prompt" type="text" list="vocab" placeholder="person (or a COCO class: cup, bottle, cell phone…)" autocomplete="off">
+      <datalist id="vocab"></datalist>
+      <button class="primary" id="set">Set</button>
+      <button id="clear">Clear</button>
+    </div>
+    <div class="row">
+      <label>Jog</label>
+      <button class="jog" data-dir="-1">◀</button>
+      <button class="jog" data-dir="1">▶</button>
+    </div>
+    <div class="row">
+      <label>Roll</label>
+      <button class="rollstep" data-d="-5">−5</button>
+      <button class="rollstep" data-d="-1">−1</button>
+      <button class="rollstep" data-d="-0.5">−0.5</button>
+      <input id="rollnum" type="number" min="-180" max="180" step="0.5" value="0"> °
+      <button class="rollstep" data-d="0.5">+0.5</button>
+      <button class="rollstep" data-d="1">+1</button>
+      <button class="rollstep" data-d="5">+5</button>
+      <button id="rollreset">Reset 0°</button>
+    </div>
+    <div class="row">
+      <input id="roll" type="range" min="-180" max="180" step="0.5" value="0" style="flex:1">
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Execution</h2>
+    <div class="row">
+      <label>LightFC placement</label>
+      <select id="placement"></select>
+    </div>
+    <table id="stats"></table>
+    <h2>Tuning</h2>
+    <div class="tune" id="tune"></div>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const post = (u, b) => fetch(u, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(b||{})}).then(r => r.json());
+let cfgInit = false;
+
+fetch('/vocab').then(r => r.json()).then(ws => { $('#vocab').innerHTML = ws.map(w => `<option value="${w}">`).join(''); });
+
+$('#set').onclick = async () => {
+  const r = await post('/prompt', {text: $('#prompt').value});
+  if (!r.ok) showAlert(r.msg, 'bad');
+};
+$('#prompt').addEventListener('keydown', e => { if (e.key === 'Enter') $('#set').click(); });
+$('#clear').onclick = () => post('/clear');
+$('#camera').onclick = () => post('/camera', {on: $('#camera').classList.contains('off')});
+$('#estop').onclick = () => post('/estop', {on: !$('#estop').classList.contains('latched')});
+// roll: slider, number box and step buttons all show the same value; every change is sent to the board
+let rollVal = 0;
+const showRoll = v => { $('#roll').value = v; $('#rollnum').value = (+v).toFixed(1); };
+const setRoll = v => {
+  v = Math.max(-180, Math.min(180, Math.round(+v * 2) / 2));
+  if (isNaN(v)) v = rollVal;
+  rollVal = v; showRoll(v); post('/config', {roll_deg: v});
+};
+$('#roll').oninput = e => { $('#rollnum').value = (+e.target.value).toFixed(1); };
+$('#roll').onchange = e => setRoll(e.target.value);
+$('#rollnum').onchange = e => setRoll(e.target.value);
+document.querySelectorAll('.rollstep').forEach(b => b.onclick = () => setRoll(rollVal + +b.dataset.d));
+$('#rollreset').onclick = () => setRoll(0);
+$('#placement').onchange = e => post('/placement', {placement: e.target.value});
+
+// hold-to-jog: resend every 100 ms; release (or a dropped connection) lets the MCU watchdog stop the motor
+document.querySelectorAll('.jog').forEach(b => {
+  let t = null;
+  const start = e => { e.preventDefault(); const d = +b.dataset.dir; post('/jog', {dir: d}); t = setInterval(() => post('/jog', {dir: d}), 100); };
+  const stop = () => { if (t) { clearInterval(t); t = null; post('/jog', {dir: 0}); } };
+  b.addEventListener('pointerdown', start); b.addEventListener('pointerup', stop); b.addEventListener('pointerleave', stop);
+});
+
+function showAlert(msg, cls) { const a = $('#alert'); a.textContent = msg; a.className = cls || ''; }
+
+const TUNE = [['deadband','Deadband (stop)'],['trigger_band','Trigger band (start)'],['edge_margin','Edge margin'],['big_box','Big box (no edge rule)'],['pulse_pwm','Pulse PWM'],['pulse_k_ms','Pulse ms per err'],['pulse_min_ms','Pulse min ms'],
+              ['pulse_max_ms','Pulse max ms'],['settle_ms','Settle ms'],['settle_frames','Settle frames'],['jog_pwm','Jog PWM'],
+              ['det_conf','Det conf'],['lost_score','Lost score'],['lost_time','Lost time s'],['verify_period','Verify s'],['verify_strikes','Verify misses→LOST']];
+function buildTune(cfg) {
+  $('#tune').innerHTML = TUNE.map(([k, l]) => `<div class="row"><label>${l}</label><input data-k="${k}" type="number" step="any" value="${cfg[k]}"></div>`).join('')
+    + `<div class="row"><label>Invert</label><input data-k="invert" type="checkbox" ${cfg.invert ? 'checked' : ''}></div>`
+    + `<div class="row"><label>Motor follows target</label><input data-k="follow" type="checkbox" ${cfg.follow ? 'checked' : ''}></div>`;
+  $('#tune').querySelectorAll('input').forEach(i => i.onchange = () => post('/config', {[i.dataset.k]: i.type === 'checkbox' ? i.checked : +i.value}));
+}
+
+const fmt = (v, d=1) => (v === undefined || v === null) ? '–' : (+v).toFixed(d);
+async function poll() {
+  try {
+    const s = await (await fetch('/state')).json();
+    $('#state').textContent = s.state; $('#state').className = s.state;
+    $('#fps').textContent = `${fmt(s.fps)} fps`;
+    const cls = {IDLE:'', SEARCH:'warn', TRACK:'ok', LOST:'bad'}[s.state];
+    if (!$('#alert').classList.contains('bad') || s.state !== 'IDLE') showAlert(s.alert, s.alert.startsWith('Unknown') ? 'bad' : cls);
+    $('#camera').classList.toggle('off', !s.camera_on); $('#camera').textContent = s.camera_on ? 'Camera: on – click to turn off' : 'Camera: OFF – click to turn on';
+    $('#estop').classList.toggle('latched', s.estop); $('#estop').textContent = s.estop ? 'E-STOP (latched) – click to clear' : 'E-STOP';
+    if (!cfgInit) {
+      buildTune(s.cfg); rollVal = s.cfg.roll_deg; showRoll(rollVal);
+      $('#placement').innerHTML = s.placements.map(p => `<option>${p}</option>`).join(''); cfgInit = true;
+    }
+    if (document.activeElement !== $('#placement')) {
+      const opt = [...$('#placement').options].find(o => o.value === s.placement || normalize(o.value) === s.placement);
+      if (opt) $('#placement').value = opt.value;
+    }
+    const y = s.sys || {}, L = s.lat || {}, st = s.stage_ms || {};
+    const temps = Object.entries(y.temps || {}).filter(([k]) => /cpuss|gpu/.test(k)).map(([k, v]) => `${k} ${fmt(v,0)}°`).join(' · ');
+    const rows = [
+      ['State / motor', `${s.state} · ${s.ctrl} · PWM ${s.cmd} · err ${fmt(s.err, 2)}`],
+      ['Pipeline FPS', fmt(s.fps)],
+      ['Detector best score / threshold', `${fmt(s.det_best, 2)} / ${fmt(s.cfg.det_conf, 2)}`],
+      ['Placement', s.placement],
+      ['Detector', `${s.detector} · ${fmt((L.det_ms||[])[0])} ms p50`],
+      ['Tracker ms p50/p95', `${fmt((L.trk_ms||[])[0])} / ${fmt((L.trk_ms||[])[1])}`],
+      ['  backbone_x / fusion / head', `${fmt(st.backbone_x)} / ${fmt(st.fusion)} / ${fmt(st.head)} ms`],
+      ['  pre / post', `${fmt(st.pre)} / ${fmt(st.post)} ms`],
+      ['Verify (GPU detector) ms', `${fmt((L.verify_ms||[])[0])} · ${s.verify_detector || ''}`],
+      ['Glass→motor ms p50/p95', `${fmt((L.glass_to_motor_ms||[])[0])} / ${fmt((L.glass_to_motor_ms||[])[1])}`],
+      ['Bridge RPC ms', fmt((L.bridge_ms||[])[0], 2)],
+      ['Capture FPS', fmt((L.capture_fps||[])[0])],
+      ['CPU % (proc / sys)', `${fmt(y.cpu_pct, 0)} / ${fmt(y.sys_cpu_pct, 0)}  (400 = 4 cores)`],
+      ['GPU', `${fmt(y.gpu_freq_mhz, 0)} MHz · busy ${fmt(y.gpu_busy_pct, 0)} %`],
+      ['CPU MHz', (y.cpu_freq_mhz || []).map(v => fmt(v, 0)).join(' ')],
+      ['Temps', temps],
+      ['RSS / peak MB', `${fmt(y.rss_mb, 0)} / ${fmt(y.hwm_mb, 0)}`],
+      ['Counters', Object.entries(s.counters || {}).map(([k, v]) => `${k} ${v}`).join(' · ')],
+    ];
+    $('#stats').innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  } catch (e) { showAlert('Connection lost', 'bad'); }
+  setTimeout(poll, 250);
+}
+function normalize(p) { return p.includes('=') ? p : `x=${p},fusion=${p},head=${p}`; }
+poll();
+</script>
+</body>
+</html>

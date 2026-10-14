@@ -1,0 +1,13 @@
+[Unit]
+Description=UNO Q pan tracker (YOLOv8n + LightFC)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/tracker/python
+ExecStart=%h/tracker/.venv/bin/python main.py --port 8000
+Restart=on-failure
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

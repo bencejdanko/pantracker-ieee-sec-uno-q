@@ -1,0 +1,3 @@
+name: Tracker MCU
+icon: 🎯
+description: Motor B (pan) driver for the pan tracker. set_motor/stop RPCs + 200 ms watchdog.
